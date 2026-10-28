@@ -8,3 +8,6 @@ plan = "2024_38.03.02_long.csv"
 
 # Листы в общей Google-таблице: mgmt_reviews, mgmt_tests, mgmt_attempts
 table_prefix = "mgmt_"
+
+# Разметка вопросов экспертами: false — закрыта (оценки только для просмотра)
+review_open = false

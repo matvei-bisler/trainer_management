@@ -23,3 +23,6 @@ PLAN_PATH = BASE_DIR / _cfg["plan"]      # учебный план в длинн
 TABLE_PREFIX = _cfg.get("table_prefix", "")
 if not re.fullmatch(r"[a-z_]*", TABLE_PREFIX):
     raise ValueError("table_prefix в program.toml: только строчные латинские буквы и «_»")
+
+# false — разметка закрыта: эксперты видят оценки, но не могут их ставить и менять
+REVIEW_OPEN = bool(_cfg.get("review_open", True))

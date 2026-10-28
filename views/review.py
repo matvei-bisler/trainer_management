@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from lib.bank import QTYPE_NAMES
+from lib.program import REVIEW_OPEN
 from lib.storage import get_storage, now_str, read_table, write_background
 from lib.ui import (STATUS_ICONS, STATUS_NAMES, effective_status, esc, filter_widgets, get_bank,
                     require_admin, show_bank_issues)
@@ -17,6 +18,10 @@ require_admin("review")
 
 bank, df = get_bank()
 show_bank_issues()
+
+if not REVIEW_OPEN:
+    st.info("🔒 Разметка закрыта: оценки можно просматривать и выгружать, но не менять. "
+            "Открыть снова — `review_open = true` в program.toml.")
 
 # Сохранение идёт в фоне (Google отвечает по 2–10 с): сохранённое сразу видно из local,
 # а pending — очередь записей в таблицу, которые ещё не подтверждены.
@@ -195,53 +200,62 @@ with tab_mark:
             fragment_now = st.session_state.get(f"{k}_fragment", prev.get("fragment", ""))
             show_question(q, fragment_now)
 
-        status = st.segmented_control(
-            "Оценка", ["green", "yellow", "red"], key=f"{k}_status",
-            # исправленный вопрос оценивается заново — прежняя оценка не подставляется
-            default=(prev.get("status") or None) if current != "changed" else None,
-            format_func=lambda s: f"{STATUS_ICONS[s]} {STATUS_NAMES[s]}",
-        )
-
-        parts_options = ["Формулировка вопроса"]
-        if q.qtype in ("single", "multi", "order", "match"):
-            parts_options += [f"Вариант {l}" for l, _ in q.options]
-        if q.qtype == "match":
-            parts_options += [f"Вариант {l}" for l, _ in q.right]
-        parts_options += ["Ключ ответа", "Тип задания", "Другое"]
-        fresh = current == "changed"  # после правки старые замечания не подставляем
-        prev_parts = [] if fresh else [p for p in str(prev.get("parts", "")).split("; ") if p in parts_options]
-
-        def prev_value(field):
-            return "" if fresh else prev.get(field, "")
-
-        if status in ("yellow", "red"):
-            parts = st.multiselect("Что исправить", parts_options, default=prev_parts, key=f"{k}_parts",
-                                   placeholder="Выберите части вопроса")
-            fragment = st.text_input("Проблемный фрагмент (скопируйте из вопроса — он подсветится)",
-                                     value=prev_value("fragment"), key=f"{k}_fragment")
-            comment = st.text_area("Комментарий", value=prev_value("comment"), key=f"{k}_comment")
-            suggestion = st.text_area("Предлагаемая редакция (необязательно)",
-                                      value=prev_value("suggestion"), key=f"{k}_suggestion")
+        if not REVIEW_OPEN:
+            # разметка закрыта: показываем итог, без формы оценки
+            st.markdown(f"**Оценка:** {STATUS_ICONS[current]} {STATUS_NAMES[current]}")
+            notes = [f"**{name}:** {esc(prev[c])}" for c, name in (
+                ("parts", "Что исправить"), ("fragment", "Фрагмент"), ("comment", "Комментарий"),
+                ("suggestion", "Предлагаемая редакция")) if prev.get(c)]
+            if notes:
+                st.markdown("  \n".join(notes))
         else:
-            parts, fragment, suggestion = [], "", ""
-            comment = st.text_input("Комментарий (необязательно)", value=prev_value("comment"),
-                                    key=f"{k}_comment_ok")
+            status = st.segmented_control(
+                "Оценка", ["green", "yellow", "red"], key=f"{k}_status",
+                # исправленный вопрос оценивается заново — прежняя оценка не подставляется
+                default=(prev.get("status") or None) if current != "changed" else None,
+                format_func=lambda s: f"{STATUS_ICONS[s]} {STATUS_NAMES[s]}",
+            )
 
-        if st.button("Сохранить и далее", type="primary", disabled=status is None):
-            row = {
-                "qid": q.qid, "group_id": q.group_id, "status": status,
-                "parts": "; ".join(parts), "fragment": fragment, "comment": comment,
-                "suggestion": suggestion, "updated_at": now_str(),
-                # снимок вопроса: по нему потом видно, что вопрос исправили после оценки
-                "snapshot": json.dumps(q.snapshot, ensure_ascii=False),
-            }
-            local[q.qid] = row
-            pending[q.qid] = write_background("reviews", row)
-            # при фильтре по статусу размеченный вопрос уходит из списка — индекс не двигаем
-            if not status_filter:
-                st.session_state["rv_idx"] = min(idx + 1, len(qids) - 1)
-            st.toast(f"{STATUS_ICONS[status]} Сохранено")
-            st.rerun()
+            parts_options = ["Формулировка вопроса"]
+            if q.qtype in ("single", "multi", "order", "match"):
+                parts_options += [f"Вариант {l}" for l, _ in q.options]
+            if q.qtype == "match":
+                parts_options += [f"Вариант {l}" for l, _ in q.right]
+            parts_options += ["Ключ ответа", "Тип задания", "Другое"]
+            fresh = current == "changed"  # после правки старые замечания не подставляем
+            prev_parts = [] if fresh else [p for p in str(prev.get("parts", "")).split("; ") if p in parts_options]
+
+            def prev_value(field):
+                return "" if fresh else prev.get(field, "")
+
+            if status in ("yellow", "red"):
+                parts = st.multiselect("Что исправить", parts_options, default=prev_parts, key=f"{k}_parts",
+                                       placeholder="Выберите части вопроса")
+                fragment = st.text_input("Проблемный фрагмент (скопируйте из вопроса — он подсветится)",
+                                         value=prev_value("fragment"), key=f"{k}_fragment")
+                comment = st.text_area("Комментарий", value=prev_value("comment"), key=f"{k}_comment")
+                suggestion = st.text_area("Предлагаемая редакция (необязательно)",
+                                          value=prev_value("suggestion"), key=f"{k}_suggestion")
+            else:
+                parts, fragment, suggestion = [], "", ""
+                comment = st.text_input("Комментарий (необязательно)", value=prev_value("comment"),
+                                        key=f"{k}_comment_ok")
+
+            if st.button("Сохранить и далее", type="primary", disabled=status is None):
+                row = {
+                    "qid": q.qid, "group_id": q.group_id, "status": status,
+                    "parts": "; ".join(parts), "fragment": fragment, "comment": comment,
+                    "suggestion": suggestion, "updated_at": now_str(),
+                    # снимок вопроса: по нему потом видно, что вопрос исправили после оценки
+                    "snapshot": json.dumps(q.snapshot, ensure_ascii=False),
+                }
+                local[q.qid] = row
+                pending[q.qid] = write_background("reviews", row)
+                # при фильтре по статусу размеченный вопрос уходит из списка — индекс не двигаем
+                if not status_filter:
+                    st.session_state["rv_idx"] = min(idx + 1, len(qids) - 1)
+                st.toast(f"{STATUS_ICONS[status]} Сохранено")
+                st.rerun()
 
 with tab_summary:
     full = df.drop(columns=["semesters", "courses"]).assign(
